@@ -1,0 +1,289 @@
+# Import necessary packages
+import os
+os.getcwd()
+os.chdir('/users/oliviaschultheis/Desktop/Machine Learning with Python')
+
+import pandas as pd
+
+import numpy as np
+import pandas as pd
+import tensorflow as tf
+
+import re
+from nltk.corpus import stopwords
+from nltk.stem import SnowballStemmer
+from keras.utils import np_utils
+
+import matplotlib.pyplot as plt
+
+import nltk
+nltk.download('stopwords')
+
+# Display settings
+pd.set_option('display.max_colwidth', None)
+
+# Read in training data
+train = pd.read_csv(
+    'science_train.csv', 
+    usecols=['Comment', 'Topic'], 
+    dtype={'Comment': str, 'Topic': str}
+)
+
+# Get data types and non-null counts for variables (which are just the comments and class) 
+train.info()
+
+# replace new line characters with empty space in training data
+train['Comment'] = train['Comment'].replace(r'\s+|\\n', ' ', regex=True) 
+
+# Read in test data
+test = pd.read_csv(
+    'science_test.csv', 
+    usecols=['Comment', 'Topic'], 
+    dtype={'Comment': str, 'Topic': str}
+)
+
+# replace new line characters with empty space in testing data
+test['Comment'] = test['Comment'].replace(r'\s+|\\n', ' ', regex=True) # replace new line characters with empty space
+
+# removes urls
+def remove_url(sentence):
+    url = re.compile(r'https?://\S+|www\.\S+')
+    return url.sub(r'', sentence)
+
+# remove '@' tags
+def remove_at(sentence):
+    url = re.compile(r'@\S+')
+    return url.sub(r'', sentence)
+
+# remove emojis, symbols, and pictographs
+def remove_emoji(sentence):
+    emoji_pattern = re.compile("["
+                           u"\U0001F600-\U0001F64F"  
+                           u"\U0001F300-\U0001F5FF"  
+                           u"\U0001F680-\U0001F6FF"  
+                           u"\U0001F1E0-\U0001F1FF"  
+                           u"\U00002702-\U000027B0"
+                           u"\U000024C2-\U0001F251"
+                           "]+", flags=re.UNICODE)
+    
+    return emoji_pattern.sub(r'', sentence)
+
+# remove common stop words
+def remove_stopwords(sentence):
+    words = sentence.split()
+    words = [word for word in words if word not in stopwords.words('english')]
+    
+    return ' '.join(words)
+
+# revert words to stems
+stemmer = SnowballStemmer('english')
+
+def stem_words(sentence):
+    words = sentence.split()
+    words = [stemmer.stem(word) for word in words]
+    
+    return ' '.join(words)
+
+# remove punctuation
+def punct_remove(sentence):
+    punct = re.compile('[^\w\s]+')
+    
+    return punct.sub(r'', sentence)
+
+# remove numbers 
+def num_remove(sentence):
+    numb = [num for num in sentence if not num.isdigit()]
+    
+    return ''.join(numb)
+
+# Apply all the above cleaning functions with lambda functions
+def clean(data):
+    data['Comment'] = data['Comment'].apply(lambda x : remove_url(x))
+    data['Comment'] = data['Comment'].apply(lambda x : remove_at(x))
+    data['Comment'] = data['Comment'].apply(lambda x : remove_emoji(x))
+    data['Comment'] = data['Comment'].apply(lambda x : remove_stopwords(x))
+    data['Comment'] = data['Comment'].apply(lambda x : stem_words(x))
+    data['Comment'] = data['Comment'].apply(lambda x : punct_remove(x))
+    data['Comment'] = data['Comment'].apply(lambda x : num_remove(x))
+    return(data)
+
+# Create cleaned training and test sets using the clean() function above
+#This will remove urls, @ symbols, emojis, stop words, revert words to stems, 
+#remove punctuation, and remove numbers for each comment
+train = clean(train)
+test = clean(test)
+
+# On training data
+# Replace any instances of multiple spaces with a single space
+train['Comment'].replace('\s+', ' ', regex=True, inplace=True) 
+# Remove leading and trailing spaces
+train['Comment'].str.strip() 
+
+# On testing data
+# Replace any instances of multiple spaces with a single space
+test['Comment'].replace('\s+', ' ', regex=True, inplace=True)
+# Remove leading and trailing spaces
+test['Comment'].str.strip() 
+
+#replace colons and semi colons with empty space in training and testing data 
+train['Comment'].replace(':', '', inplace = True)
+test['Comment'].replace(';', '', inplace = True)
+
+# Look at first 5 "cleaned" comments from the training set
+train.head() 
+
+# Look at first 5 "cleaned" comments from the testing set
+
+# Assign just the sentences to training and testing 'X'
+X_train = train['Comment']
+X_test = test['Comment']
+
+# Assign the subject column of 'Biology', 'Chemistry' or 'Physics' to 'classify_train' and 'classify_test'
+classify_train = train['Topic']
+classify_test = test['Topic']
+
+#Convert response to one hot encoding form
+y_train = pd.get_dummies(classify_train).values 
+y_test = pd.get_dummies(classify_test).values
+
+# Split so that 20% of the original testing set becomes validation set; remaining 80% stays as testing set
+from sklearn.model_selection import train_test_split
+X_test, X_validate, y_test, y_validate = train_test_split(
+X_test, y_test, random_state=42, test_size=0.20) 
+
+from nltk import word_tokenize
+
+from keras.utils import pad_sequences
+from keras.layers import Input, Dense, LSTM, Embedding
+from keras.layers import Dropout, Activation, Bidirectional, GlobalMaxPool1D
+from keras.models import Sequential
+from keras import initializers, regularizers, constraints, optimizers, layers
+from keras.preprocessing import text, sequence
+
+# Create function for tokenizer: accept training, validation, and testing data as input
+def tokenizer_create(train, val, test):
+    # combine train, val, and test data
+    together = pd.concat([train, val, test])
+    # Initialize tokenizer
+    tokenizer = tf.keras.preprocessing.text.Tokenizer()
+    tokenizer.fit_on_texts(together)
+    
+    return tokenizer
+
+def encode (together, tokenizer):
+      # Encode each string of words in each comment into an array of numbers
+    encoded = tokenizer.texts_to_sequences(together)
+    # Pad with zeros to ensure that all strings are the same length
+    encoded = tf.keras.utils.pad_sequences(encoded, padding = 'post')
+    
+    return encoded
+
+# Apply tokenizer function
+tokenizer = tokenizer_create(X_train, X_validate, X_test) 
+# Apply encode function on train data 
+encoded_train = encode(X_train, tokenizer)
+# Apply encode function on test data
+encoded_test = encode(X_test, tokenizer)
+# Apply encode function on validation data
+encoded_validate = encode(X_validate, tokenizer)
+
+# Set up initialization for embedding layer
+# Embedding layer will help establish deeper meaning in text with word relationships
+embedding_dict = {}
+
+# Use GloVe Embedding
+# glove.6B.100d.txt is a text file which consists of numbers corresponding to certain words
+Assign the empty dictionary a key with that word and a value with the numbers present in the glove txt file corresponding to that word
+with open('glove.6B.100d.txt','r', encoding="utf8") as f:
+    for line in f:
+        values = line.split()
+        word = values[0]
+        vectors = np.asarray(values[1:],'float32')
+        embedding_dict[word] = vectors
+        
+f.close()
+
+num_words = len(tokenizer.word_index) + 1
+# Create a blank matrix of zeros with as many rows as the number of words in the tokenizer vocabulary plus 1
+# Number of Columns is 100
+embedding_matrix = np.zeros((num_words, 100))
+# For loop to append the numeric values for each word to an embedding matrix
+for word, i in tokenizer.word_index.items():
+    emb_vec = embedding_dict.get(word)
+    if emb_vec is not None:
+        embedding_matrix[i] = emb_vec
+# Convert each set of comment data to numpy arrays; they were previously Pandas Data Frames
+X_train = np.array(X_train)
+X_validate = np.array(X_validate)
+X_test = np.array(X_test)
+
+  # Start building RNN 
+model = Sequential()
+# Add embedding layer
+model.add(Embedding(input_dim = (len(tokenizer.word_index)+1), output_dim = 100, 
+            embeddings_initializer = tf.keras.initializers.Constant(embedding_matrix), trainable = True))
+# Add bidrectional LSTM layer with 64 nodes.
+model.add(tf.keras.layers.Bidirectional(LSTM(64, dropout=0.2, recurrent_dropout=0.2)))
+# Alternate dropout layers and dense layers with 50 nodes and relu activation
+model.add(Dropout(0.2))
+model.add(Dense(50, activation = 'relu'))
+model.add(Dropout(0.2))
+model.add(Dense(50, activation = 'relu'))
+model.add(Dropout(0.2))
+# Add final dense layer with 3 units because there are 3 possible classifications
+# Use softmax activation because this is multi-class classification with one-hot encoding
+model.add(Dense(3, activation='softmax'))
+
+# Bidirectional layer has 128 as the last value in shape because 64 nodes were specified and it works in both directions
+model.summary()
+# Measure the model with accuracy, precision, and recall
+model.compile(loss = 'categorical_crossentropy', 
+              optimizer=tf.keras.optimizers.legacy.Nadam(0.001), 
+              metrics=['accuracy', 'Precision', 'Recall'])
+# A callback will monitor validation loss to prevent overfitting. If the validation loss increases over more than 2 epochs,
+# the learning rate will be reduced
+callback = [
+    tf.keras.callbacks.ReduceLROnPlateau(monitor='val_loss', patience=2, verbose=1)
+]
+# Fit the model using encoded data for the features because the model cannot interpret the strings themselves
+history = model.fit(encoded_train, y_train, epochs = 5, validation_data=(encoded_validate, y_validate))
+# Evaluate the model
+metrics = model.evaluate(encoded_test, y_test)
+
+# Gather the metric values
+accuracy = metrics[1]
+loss = metrics[0]
+precision = metrics[2]
+recall = metrics[3]
+f1 = 2 * (precision * recall) / (precision + recall)
+
+# Print out metrics
+print('accuracy: ' + str(accuracy))
+print('loss: ' + str(loss))
+print('precision: ' + str(precision))
+print('recall: ' + str(recall))
+print('F1 score: ' + str(f1)) 
+
+# Plot accuracy, loss, precision, and recall
+fig, axs = plt.subplots(1, 4, figsize=(20, 5))
+
+axs[0].set_title('Accuracy')
+axs[0].plot(history.history['accuracy'], label='train')
+axs[0].plot(history.history['val_accuracy'], label='val')
+axs[0].legend()
+
+axs[1].set_title('Loss')
+axs[1].plot(history.history['loss'], label='train')
+axs[1].plot(history.history['val_loss'], label='val')
+axs[1].legend()
+
+axs[2].set_title('Precision')
+axs[2].plot(history.history['precision'], label='train')
+axs[2].plot(history.history['val_precision'], label='val')
+axs[2].legend()
+
+axs[3].set_title('Recall')
+axs[3].plot(history.history['recall'], label='train')
+axs[3].plot(history.history['val_recall'], label='val')
+axs[3].legend()
+  
